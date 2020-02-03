@@ -1,12 +1,25 @@
-const fs = require('fs');
-const path = require('path');
 const bodyParser = require('body-parser');
 const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
+const dotenv = require('dotenv');
+const uuidv1 = require('uuid/v1');
+const AWS = require("aws-sdk");
+dotenv.config();
 
 const server = express();
-const bookmarksFolder = path.join(__dirname, 'files');
+
+// Set AWS config
+AWS.config.update({
+    accessKeyId: process.env.accessKeyId,
+    secretAccessKey: process.env.secretAccessKey,
+    region: 'ap-southeast-2'
+});
+
+const dynamo = new AWS.DynamoDB.DocumentClient({
+    convertEmptyValues: true
+});
+
 
 // Enable body parser
 server.use(bodyParser.json());
@@ -14,34 +27,32 @@ server.use(cors());
 server.use(morgan('combined'));
 
 server.get('/bookmarks', (req, res) => {
-    fs.readdir(bookmarksFolder, (err, files) => {
-        if (err) {
-            res.status(500).send('Could not read bookmarks directory');
+    dynamo.scan({
+        TableName: 'Bookmarks'
+    }, (err, data) => {
+        if(err) {
+            console.error('Failed to query DynamoDB', err);
+            res.status(500).send('Could not query database');
+        } else {
+            console.log('Query successful');
+            res.status(200).send(data.Items[0]);
         }
-
-        const mostRecent = files.sort().shift();
-        const mostRecentPath = path.join(bookmarksFolder, mostRecent);
-        fs.readFile(mostRecentPath, (err, data) => {
-            if (err) {
-                res.status(500).send('Could not read file');
-            }
-
-            res.status(200).send(JSON.parse(data));
-        })
-    })
+    });
 });
 
 server.post('/bookmarks', (req, res) => {
-    const reqBody = req.body;
-    const newFileName = `bookmarks_${Date.now()}.json`;
-    const savePath = `${bookmarksFolder}/${newFileName}`;
-    fs.writeFile(savePath, JSON.stringify(reqBody, null, 2), err => {
-        if (err) {
-            console.error(e);
+    const reqBody = {...req.body, id: uuidv1() };
+    dynamo.put({
+        TableName: 'Bookmarks',
+        Item: reqBody
+    }, (err, data) => {
+        if(err) {
+            console.error('Failed to PUT to DynamoDB instance', err);
             res.status(500).send('Could not create file');
+        } else {
+            console.log('Put successful')
+            res.status(201).send(data);
         }
-
-        res.status(201).send('File created');
     });
 });
 
